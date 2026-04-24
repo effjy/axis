@@ -1,0 +1,367 @@
+```markdown
+# 🔐 Axis-512 v3.0.5‑Keccak
+
+<div align="center">
+
+![Language](https://img.shields.io/badge/language-C_17-blue)
+![Standard](https://img.shields.io/badge/standard-POSIX-lightgrey?logo=linux)
+![License](https://img.shields.io/badge/license-MIT-yellow)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![GitHub stars](https://img.shields.io/github/stars/effjy/axis?style=social)](https://github.com/effjy/axis)
+
+</div>
+
+<p align="center">
+  <strong>The unbreakable, streaming, post‑quantum‑ready file encryption tool.</strong><br>
+  <em>O(1) RAM · Constant‑time · Hybrid Kyber‑1024 + X25519 · Keccak‑f[1600] sponge</em>
+</p>
+
+---
+
+## 📖 Table of Contents
+
+- [Overview](#-overview)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Quick Start](#-quick-start)
+- [Installation](#-installation)
+- [Usage](#-usage)
+  - [Interactive Mode](#interactive-mode)
+  - [Command‑line Flags](#command-line-flags)
+- [Security Design](#-security-design)
+  - [Layered Encryption & Key Derivation](#layered-encryption--key-derivation)
+  - [Hybrid Post‑Quantum KEM](#hybrid-post-quantum-kem)
+  - [Constant‑Time & Fault Resistance](#constant-time--fault-resistance)
+- [File Format](#-file-format)
+- [Self‑Tests](#-self-tests)
+- [Memory Hardening](#-memory-hardening)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Acknowledgements](#-acknowledgements)
+
+---
+
+## 🚀 Overview
+
+**Axis-512** is a high‑assurance file encryption/decryption program that wraps a file in **multiple cryptographic layers**, all operating in constant **O(1) RAM** regardless of file size. It combines:
+
+- **Argon2id** for memory‑hard password‑based key derivation
+- **Hybrid Kyber‑1024 + X25519** (or ephemeral keys) for key exchange
+- **Keccak‑f[1600]** (NIST standard sponge) as the default outer cipher
+- **XChaCha20‑Poly1305** secretstream for inner encryption
+- **BLAKE2b** for key expansion, integrity, and synthetic IV (SIV)
+- **Triple‑modular redundancy (TMR)** to detect random hardware faults
+- **Constant‑time critical paths** to eliminate timing side‑channels
+
+Every file is encrypted with a unique, wrapped outer key, and the entire process is authenticated from end to end. Whether you’re protecting a personal diary or an enterprise backup, Axis‑512 offers **military‑grade security with a simple interactive terminal UI**.
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|:--------|:------------|
+| 🔑 **Post‑Quantum & Classical Hybrid** | Kyber‑1024 (FIPS 203 candidate) + X25519. The safest practical key agreement even against quantum adversaries. |
+| 🧠 **Quantum Preset** | Classical cost amplifier: Argon2id at 2 GiB memory and SPIP iterations at 16M, raising the bar for quantum cryptanalysis.<sup>*</sup> |
+| 📦 **Layered Encryption** | Inner XChaCha20‑Poly1305 secretstream + outer Keccak sponge (or AES‑256‑GCM MAC seal). |
+| ⚡ **Streaming O(1) RAM** | Never loads the entire file into memory. Uses fixed‑size 1 MiB buffers for all operations. |
+| 🛡️ **Paranoid Mode** | Locks Keccak rounds to 24, enforces extra mixing in SPIP, adds capacity hardening. |
+| 🔐 **Per‑File Unique Keys** | JIT key wrapping – a fresh outer key is generated per file, encrypted with the derived key before use. |
+| 🔎 **Fault Resistance** | Core Keccak permutation is run three times and results are voted – a single silent hardware error is caught immediately. |
+| 🧪 **Built‑in Self‑Tests** | Comprehensive checks at startup (sponge, SPIP, JIT, hybrid KEM, constant‑time utilities). Refuses to run if anything fails. |
+| 🧹 **Secure Memory Hygiene** | All sensitive buffers are `mlock`'d, scrubbed, and zeroed; heap is sanitised after each operation. |
+| 🎨 **Interactive TUI** | Full‑color menu with progress bars, live encryption speed, and easy settings configuration. |
+
+<small><sup>*</sup>Classical cost amplifier only – not a mathematically proven post‑quantum scheme for the symmetric layers.</small>
+
+---
+
+## 🏗️ Architecture
+
+```
+      Password + PIN
+           │
+           ▼
+  Argon2id (256 MiB default) → Master Key
+           │
+           ├──→ Hybrid KEM (Kyber‑1024 + X25519)
+           │    or Ephemeral Key / Classic
+           │
+           ▼
+  Derived Outer Key
+           │
+           ▼
+  JIT wrap → File Outer Key (per‑file random)
+           │
+           ├──→ SIV computation (BLAKE2b over plaintext)
+           │
+           ▼
+  Inner encryption (XChaCha20‑Poly1305 secretstream)
+   · Random inner key & nonce written to output
+   · Inner nonce bound as AD on first chunk
+           │
+           ▼
+  Outer encryption (streaming Keccak sponge or AES‑GCM seal)
+   · Keyed by File Outer Key
+   · Final 64‑byte authentication tag
+           │
+           ▼
+  Encrypted file ready
+```
+
+Decryption reverses the process, verifying:
+1. Outer authentication tag  
+2. Inner secretstream MACs  
+3. SIV against the recovered plaintext  
+
+All checks are constant‑time – a single mismatch aborts the operation.
+
+---
+
+## ⚡ Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/effjy/axis.git
+cd axis
+
+# Build (requires libsodium and a Kyber‑1024 library – see Installation)
+make
+
+# Run the interactive menu
+./axis512
+
+# Encrypt a file (choose option 1)
+#  → Enter password, optional PIN, input & output paths.
+
+# Decrypt a file (choose option 2)
+#  → Same steps – the original file is restored.
+```
+
+Non‑interactive example (feeding commands via stdin):
+
+```bash
+./axis512 --quiet --kyber <<< "1
+my_password
+0
+secret.docx
+secret.axis
+"
+```
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+
+- **C17 compiler** (GCC ≥ 8, Clang ≥ 10)
+- **libsodium ≥ 1.0.18** (development files)
+- **Kyber‑1024 reference implementation** providing `kyber/kem.h` with `KYBER_*` constants and functions.  
+  Place it in the `kyber/` subdirectory. (Works with [PQClean](https://github.com/PQClean/PQClean) or [liboqs](https://openquantumsafe.org/).)
+
+#### Install libsodium
+
+```bash
+# Debian / Ubuntu
+sudo apt-get update && sudo apt-get install libsodium-dev
+
+# macOS (Homebrew)
+brew install libsodium
+```
+
+### Build Axis‑512
+
+```bash
+gcc -std=c17 -O2 -march=native -o axis512 axis.c intern.c \
+    -lsodium -lpthread -ldl -lm \
+    -I. -Ikyber \
+    -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L
+```
+
+Optional security hardening flags:
+
+```bash
+gcc ... -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wl,-z,relro,-z,now
+```
+
+(You can also use the provided `Makefile` if available in your repository.)
+
+---
+
+## 🎮 Usage
+
+### Interactive Mode
+
+Run `./axis512` and use the numeric menu.
+
+```
+    █████╗ ██╗  ██╗██╗███████╗   ██████╗ ██████╗
+   ██╔══██╗╚██╗██╔╝██║██╔════╝   ╚════██╗██╔════╝
+   ███████║ ╚███╔╝ ██║███████╗    █████╔╝███████╗
+   ██╔══██║ ██╔██╗ ██║╚════██║   ██╔═══╝ ██╔═══██╗
+   ██║  ██║██╔╝ ██╗██║███████║   ███████╗╚██████╔╝
+   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚══════╝   ╚══════╝ ╚═════╝
+
+Axis-512 v3.0.5-Keccak – Unbreakable sponge (NIST standard)
+KDF: Moderate (256 MiB) | Rounds: 20 | TMR: ON | Paranoid: OFF
+            Mode: Hybrid KEM | Outer: Keccak-f[1600] sponge
+     ┌─────────────────────────────────────────┐
+     │  1. Encrypt a file                      │
+     │  2. Decrypt a file                      │
+     │  3. Settings                            │
+     │  4. Exit                                │
+     └─────────────────────────────────────────┘
+     Choice:
+```
+
+The **Settings** menu (`3`) lets you adjust:
+- Argon2id memory (128 MiB → 2 GiB)  
+- Keccak rounds (16 / 20 / 24)  
+- SPIP iterations (1M – 16M)  
+- TMR on/off, Paranoid mode, Ephemeral / Kyber mode  
+- Outer cipher (Keccak sponge vs. AES‑256‑GCM seal)  
+- Password echo (visibility)
+
+### Command‑line Flags
+
+| Flag | Description |
+|------|-------------|
+| `-q` / `--quiet` | Suppress progress bars (still prints essential info). |
+| `--dry-run` | Simulate the operation – no files are written. |
+| `--ephemeral` | Enable ephemeral key mode (disables Kyber). |
+| `--kyber` | Force hybrid KEM mode (disables ephemeral). |
+| `--aes-outer` | Select AES‑256‑GCM + XChaCha20 outer layer instead of Keccak. |
+| `--no-heap-scrub` | Skip heap sanitisation after operation (slightly faster, less secure). |
+
+---
+
+## 🔬 Security Design
+
+### Layered Encryption & Key Derivation
+
+1. **Argon2id** derives a 32‑byte Master Key from the user’s password+ PIN.
+2. Based on the selected mode, a **Derived Outer Key** is obtained:
+   - **Hybrid KEM:** Combine Kyber‑1024 and X25519 shared secrets via BLAKE2b.
+   - **Ephemeral:** A random key is encrypted with the Master Key.
+   - **Classic:** Master Key is used directly.
+3. A **per‑file File Outer Key** is generated and wrapped (JIT) with the Derived Outer Key using XChaCha20‑Poly1305.
+4. **SIV** (64‑byte BLAKE2b hash) is computed over the plaintext (domain‑separated, includes file length).
+5. **Inner encryption** (XChaCha20‑Poly1305 secretstream) with a fresh random key and nonce. The nonce is bound as associated data on the first chunk.
+6. **Outer encryption**:
+   - Default: Keccak‑f[1600] sponge, keyed by SPIP‑expanded File Outer Key, with a final squeezed tag.
+   - Alternative: AES‑256‑GCM MAC seal over an XChaCha20‑Poly1305 stream.
+
+All layers are authenticated; any tampering causes a decryption failure that leaks no information about the plaintext or keys.
+
+### Hybrid Post‑Quantum KEM
+
+Axis‑512 uses the **Kyber‑1024 + X25519** hybrid:
+- A static Kyber‑1024 keypair and an X25519 keypair are generated per file.
+- The secret keys are encrypted with the Master Key (SKE).
+- An ephemeral X25519 keypair is created for encapsulation.
+- Shared secrets: `ss_kyber = Kyber.Enc(pk_kyber)` and `ss_x25519 = X25519(eph_priv, pk_x25519)`.
+- Both shared secrets are combined via BLAKE2b (keyed with domain `"AXIS-HYBRID"`) to form the final hybrid shared secret.
+- This ensures that even if one key exchange mechanism is broken (classical or quantum), the hybrid secret remains secure as long as one of them holds.
+
+### Constant‑Time & Fault Resistance
+
+- All comparisons on sensitive data (SIV, TMR voting, tags) use `sodium_memcmp` – constant‑time, no branches.
+- In `axis_permute()`, the TMR result selection is done with a **bitwise mask** instead of an `if`/`else`, avoiding timing leaks.
+- Padding in `absorb_data()` is computed without secret‑dependent branches.
+- The core Keccak‑f[1600] permutation runs three times, and the results are voted; a discrepancy signals a potential hardware fault and stops the operation.
+
+---
+
+## 📁 File Format
+
+The encrypted file is self‑contained and contains (in order):
+
+```
+- salt (32 bytes)
+- (if Kyber mode) SKE header: encrypted Kyber+X25519 secret keys
+- (if Kyber mode) Kyber ciphertext + ephemeral X25519 public key
+- (if Ephemeral mode) encrypted ephemeral key
+- JIT wrapped file outer key (nonce + wrapped key)
+- SIV (64 bytes)
+- Outer ciphertext stream (inner header + inner ciphertext + outer authentication tag)
+```
+
+All sizes are fixed; no delimiters are needed. The binary layout is endian‑ness independent for the salt and SIV (explicit little‑endian encoding where needed).
+
+---
+
+## 🧪 Self‑Tests
+
+On every startup, Axis‑512 performs an extensive self‑test battery:
+
+1. Keccak‑f[1600] permutation non‑triviality
+2. SPIP BLAKE2b determinism and key differentiation
+3. JIT key wrap/unwrap and tamper rejection
+4. SIV domain‑string length consistency
+5. Keccak avalanche effect
+6. AES‑256‑GCM round‑trip (if hardware available)
+7. SPIP consistency across runs
+8. Constant‑time utility functions (`ct_memcmp`, `ct_is_zero`)
+
+If any test fails, the program exits with a clear error message – **security first**.
+
+---
+
+## 🧠 Memory Hardening
+
+- `mlock()` locks all sensitive buffers into physical RAM – never swapped to disk.
+- `MADV_DONTDUMP` and `MADV_WIPEONFORK` guard against core dumps and forking leaks.
+- After each operation, the heap is scrubbed with random and patterned writes before `free()` (unless `--no-heap-scrub` is set).
+- Core dumps are disabled via `setrlimit(RLIMIT_CORE, 0)`.
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] GUI front‑end (Qt or Electron)
+- [ ] Smartcard / YubiKey / PKCS#11 integration
+- [ ] TPM‑based key protection
+- [ ] Encrypt‑to‑multiple‑recipients
+- [ ] Formal security proof for the Keccak‑sponge mode of operation
+- [ ] Additional outer ciphers (e.g., AES‑256‑GCM‑SIV)
+
+---
+
+## 🤝 Contributing
+
+Contributions are very welcome!  
+Please open an issue for discussion before submitting a large PR.  
+Make sure to check the [CONTRIBUTING.md](CONTRIBUTING.md) (if one exists) for guidelines.
+
+- Bug reports and feature requests: [GitHub Issues](https://github.com/effjy/axis/issues)
+- Security disclosures: please email `effjy+security@example.com` (to be updated with a real contact).
+
+---
+
+## 📜 License
+
+Axis‑512 is open‑source software licensed under the **MIT License**.  
+See the [LICENSE](LICENSE) file for details.
+
+*Kyber‑1024 and libsodium are covered by their own respective licenses; please consult their repositories.*
+
+---
+
+## 🙏 Acknowledgements
+
+Axis‑512 stands on the shoulders of giants:
+
+- [**libsodium**](https://doc.libsodium.org/) – the cryptography library
+- The Kyber‑1024 design by **NIST PQC Round 3 team**
+- The Keccak sponge function by **Guido Bertoni, Joan Daemen, Michaël Peeters, and Gilles Van Assche**
+- All contributors and reviewers who help make open‑source security stronger
+
+---
+
+<p align="center">
+  <strong>Encrypt like there's no tomorrow.<br>Axis‑512 – Unbreakable, streaming, post‑quantum ready.</strong><br>
+  <sub>Built with ❤️ by <a href="https://github.com/effjy">effjy</a></sub>
+</p>
+```
