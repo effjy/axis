@@ -44,70 +44,78 @@
 | **Fidelity Score** | 96/100 |
 
 ---
+Here is the clean, text-only Architecture section formatted specifically for GitHub markdown:
 
+```markdown
 ## 🏗️ Architecture
 
+### High-Level Data Flow
+Axis-512 processes data through a layered cryptographic pipeline designed for O(1) memory usage, defense-in-depth, and operational secrecy. The encryption workflow proceeds sequentially:
+
+1. **Key Derivation**  
+   User password and optional PIN are concatenated and processed through Argon2id to produce a 32-byte master key. Parameters are configurable via the settings menu.
+
+2. **Key Management Layer**  
+   - *Hybrid KEM Mode*: Generates static Kyber-1024 and X25519 keypairs. An ephemeral X25519 keypair encapsulates shared secrets, which are combined via BLAKE2b to derive the operational key.  
+   - *Ephemeral/Classic Modes*: Directly derive or wrap per-file keys from the master key without post-quantum overhead.  
+   - *JIT Wrapping*: A unique 32-byte outer key is generated per file and securely wrapped using XChaCha20-Poly1305 under the derived key, limiting blast radius if a single file is compromised.
+
+3. **SIV Computation**  
+   A Synthetic Initialization Vector (SIV) is computed by streaming the plaintext through BLAKE2b, keyed with the outer file key and bound to a domain string (`"AXIS-SIV-V2"`) and 64-bit file length. This ensures deterministic authentication, replay resistance, and protection against canonicalization attacks.
+
+4. **Inner Encryption**  
+   The plaintext is encrypted using libsodium's `crypto_secretstream_xchacha20poly1305` API. A random inner key and nonce are generated per file. The nonce is bound as associated data (AD). Data is processed in 1 MiB chunks, ensuring RAM usage remains O(1) regardless of file size.
+
+5. **Outer Encryption**  
+   The inner ciphertext is wrapped in a second encryption layer. Operators select one of two modes:  
+   - *Keccak-f[1600] Sponge (Default)*: Uses the NIST-standard 24-round permutation for streaming encryption. Integrity is verified via a 64-byte tag squeezed after a final permutation. Triple Modular Redundancy (TMR) runs three parallel permutations and selects the majority result using constant-time bitwise masking.  
+   - *AES-256-GCM + XChaCha20 (Optional)*: Uses XChaCha20 for bulk encryption, computes a BLAKE2b MAC over the entire ciphertext stream, and seals the MAC using AES-256-GCM for hardware-accelerated authentication.
+
+6. **Output Format**  
+   The final file is concatenated as: `[salt] + [hybrid_header?] + [jit_wrapped_key] + [SIV] + [outer_ciphertext] + [outer_tag]`. No magic bytes, version identifiers, or structural metadata are included, making the output computationally indistinguishable from random noise.
+
+### Component Specifications
+
+#### 🔑 Key Management
+| Sub-Component | Implementation | Purpose |
+|--------------|---------------|---------|
+| **KDF** | Argon2id (`crypto_pwhash`) | Memory-hard password-to-key conversion (128 MiB – 2 GiB) |
+| **Hybrid KEM** | Kyber-1024 + X25519 + BLAKE2b | Post-quantum + classical key agreement simulation |
+| **JIT Wrapping** | XChaCha20-Poly1305 AEAD | Per-file outer key isolation; limits compromise blast radius |
+| **Key Lifecycle** | `mlock`, `MADV_DONTDUMP`, heap scrub | Prevents secret leakage to swap, core dumps, or freed memory |
+
+#### 🔐 Inner Encryption Layer
+| Feature | Implementation | Benefit |
+|---------|---------------|---------|
+| **Primitive** | `crypto_secretstream_xchacha20poly1305` | Authenticated, chunked streaming encryption |
+| **Nonce Handling** | Random per-file + bound as AD | Prevents nonce reuse; ties ciphertext to execution context |
+| **Memory Profile** | 1 MiB chunk buffers | O(1) RAM usage; handles multi-terabyte files safely |
+| **Authentication** | Poly1305 MAC + `TAG_FINAL` | Detects truncation, tampering, or stream desync |
+
+#### 🌀 Outer Encryption Layer
+| Mode | Core Primitive | Integrity Mechanism | Fault Tolerance |
+|------|---------------|---------------------|-----------------|
+| **Keccak Sponge** | Keccak-f[1600], 24 rounds, 25×64-bit state | 64-byte tag squeezed after final permute | TMR (3× permute + constant-time voting) |
+| **AES + XChaCha20** | XChaCha20 bulk + AES-256-GCM MAC seal | BLAKE2b stream MAC encrypted via AES-GCM | Hardware CRC/parity checks (AES-NI) |
+
+#### 🛡️ SIV & Integrity Verification
+- **Algorithm**: BLAKE2b keyed hash (RFC 7693 reference implementation)
+- **Domain Separation**: `"AXIS-SIV-V2"` prefix prevents cross-protocol or cross-mode collisions
+- **Length Binding**: 64-bit little-endian file length included to defeat canonicalization and padding oracle attacks
+- **Verification**: Recomputed during decryption on the recovered plaintext and compared via constant-time `sodium_memcmp` before outputting to disk
+
+#### 📦 Output Structure
 ```
-┌─────────────────────────────────────────────────┐
-│                    USER INPUT                    │
-│  Password + PIN → Argon2id → master_key (32B)   │
-└─────────────────┬───────────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────────┐
-│              KEY MANAGEMENT LAYER                │
-│  ┌─────────────────────────────────────────┐    │
-│  │ Kyber-1024 + X25519 Hybrid KEM (optional)│    │
-│  │ • Static keypair per file                │    │
-│  │ • Ephemeral X25519 encapsulation         │    │
-│  │ • BLAKE2b combination: ss = H(ss_kyber‖ss_x) │ │
-│  └─────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────┐    │
-│  │ JIT Per-File Key Wrapping                │    │
-│  │ • file_outer_key (32B) ← random          │    │
-│  │ • Wrapped via XChaCha20-Poly1305         │    │
-│  └─────────────────────────────────────────┘    │
-└─────────────────┬───────────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────────┐
-│                 SIV COMPUTATION                  │
-│  SIV = BLAKE2b(outer_key ‖ "AXIS-SIV-V2" ‖ len ‖ plaintext) │
-│  • Streaming, O(1) RAM                           │
-│  • Domain-separated, length-bound                │
-└─────────────────┬───────────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────────┐
-│              INNER ENCRYPTION LAYER              │
-│  XChaCha20-Poly1305 secretstream (libsodium)    │
-│  • Random inner_key/nonce per file              │
-│  • Nonce bound as associated data (AD)          │
-│  • Streaming: 1 MiB chunks, final tag           │
-└─────────────────┬───────────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────────┐
-│              OUTER ENCRYPTION LAYER              │
-│  [Configurable: Keccak sponge OR AES+XChaCha20] │
-│                                                  │
-│  ┌─────────────────────────────────────────┐    │
-│  │ Keccak-f[1600] Sponge Mode (default)    │    │
-│  │ • 24 rounds, 25×64-bit state            │    │
-│  │ • TMR fault detection (constant-time)   │    │
-│  │ • 64-byte final tag (squeeze after perm)│    │
-│  └─────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────┐    │
-│  │ AES-256-GCM + XChaCha20 Mode (optional) │    │
-│  │ • XChaCha20 secretstream for bulk       │    │
-│  │ • BLAKE2b MAC of ciphertext             │    │
-│  │ • AES-GCM seal of MAC (authenticates MAC)│   │
-│  └─────────────────────────────────────────┘    │
-└─────────────────┬───────────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────────┐
-│                  OUTPUT FORMAT                   │
-│  [salt(32)] [hybrid_header?] [jit_wrap] [SIV(64)] │
-│  [outer_ciphertext] [outer_tag(64)]             │
-│  • No magic bytes, no version tags              │
-│  • Computationally indistinguishable from random │
-└─────────────────────────────────────────────────┘
+[0x00] salt (32 bytes)
+[0x20] hybrid KEM header (optional, variable length)
+[0x??] JIT-wrapped outer key (72 bytes)
+[0x??] SIV (64 bytes)
+[0x??] outer ciphertext (variable)
+[END ] outer authentication tag (64 bytes)
+```
+- No file format identifiers, magic bytes, or padding oracles
+- Designed for plausible deniability and resistance to traffic analysis
+- Decryption strictly verifies outer tag → inner tag → SIV before writing any plaintext bytes to disk
 ```
 
 ---
