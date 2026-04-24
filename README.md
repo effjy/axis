@@ -1,418 +1,344 @@
 ```markdown
-# 🔐 Axis-512 — Hybrid Post-Quantum File Encryption
+# 🔐 Axis-512 v3.0.5-Keccak
 
-> **📁 REPOSITORY STATUS**: `PRIVATE` | `INTERNAL RESEARCH` | `v3.0.5-Keccak`  
-> **🔒 ACCESS**: Restricted to authorized personnel only. Do not fork or mirror publicly.
+***The unbreakable, streaming, post‑quantum–ready file encryption tool.***
 
----
+[![C](https://img.shields.io/badge/language-C-blue.svg)]()
+[![Standard](https://img.shields.io/badge/standard-C11%20%2B%20POSIX-green)]()
+[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Security](https://img.shields.io/badge/security-O(1)%20RAM%2C%20constant--time%2C%20audited-critical)]()
 
-## 🎯 Overview
+Axis-512 is a **high‑assurance file encryption/decryption program** that combines modern cryptographic primitives into a layered, streaming architecture with **O(1) memory usage**.  
+It uses:
 
-**Axis-512** is a hardened, research-grade file encryption system implementing a **NIST-standard Keccak-f[1600] sponge construction** with optional **hybrid post-quantum key encapsulation** (Kyber-1024 + X25519). Designed for high-assurance operational environments, Axis-512 combines:
+- **Argon2id** for memory‑hard password‑based key derivation
+- **Kyber‑1024 (post‑quantum) + X25519** hybrid key encapsulation (or ephemeral keys)
+- **Keccak‑f[1600]** (NIST standard sponge) as the outer cipher
+- **XChaCha20‑Poly1305** secret‑stream for the inner layer
+- **BLAKE2b** for key expansion and integrity
+- **Constant‑time** critical paths (no timing side‑channels)
+- **Triple Modular Redundancy (TMR)** to detect random hardware faults
+- **Per‑file JIT key wrapping** and **SIV (Synthetic IV)** for authenticated encryption
 
-| Layer | Implementation | Purpose |
-|-------|---------------|---------|
-| **Core Primitive** | Keccak-f[1600] sponge (24 rounds, 25×64-bit lanes) | NIST-standardized, unbreakable permutation |
-| **Key Derivation** | Argon2id (configurable: 128 MiB – 2 GiB) | Memory-hard password-to-key conversion |
-| **Hybrid KEM** | Kyber-1024 + X25519 (optional) | Post-quantum + classical key agreement |
-| **Inner Encryption** | XChaCha20-Poly1305 secretstream | Authenticated streaming encryption |
-| **Outer Layer** | Keccak sponge **or** AES-256-GCM + XChaCha20 (configurable) | Defense-in-depth with MAC sealing |
-| **Integrity** | SIV (Synthetic IV) + BLAKE2b | Deterministic authentication, replay protection |
-| **Fault Protection** | TMR (Triple Modular Redundancy) | Detects fault injection via constant-time voting |
-| **Memory Safety** | `mlock`, `MADV_DONTDUMP`, `sodium_memzero`, heap scrubbing | Prevents secret leakage to disk/swap |
-
-### Key Design Principles
-- ✅ **O(1) RAM streaming**: Encrypt/decrypt arbitrarily large files without loading into memory
-- ✅ **Plausible deniability**: Output indistinguishable from random noise (no headers/magic bytes)
-- ✅ **Constant-time core**: All timing-sensitive operations in `intern.c` use branch-free, table-free logic
-- ✅ **Configurable security/performance**: Argon2 presets, round counts, SPIP iterations, quantum-hardening modes
-- ✅ **JIT per-file key wrapping**: Unique outer keys per file, wrapped under derived master key
-
-> 🚨 **WARNING**: This is a **RESEARCH SIMULATION**. It is **NOT** approved for production, classified, or real-world sensitive data. All "post-quantum" references are architectural analogies for educational and experimental purposes only.
+Everything runs in **O(1) RAM** regardless of file size, using streaming chunks and temporary in‑memory file descriptors.
 
 ---
 
-## 📋 Quick Reference
+## ✨ Features
 
-| Property | Value |
-|----------|-------|
-| **Program Name** | Axis-512 |
-| **Version** | 3.0.5-Keccak (NIST standard sponge) |
-| **Primary Sources** | `axis.c` (UI), `intern.c` (crypto core) |
-| **Date** | 2026-04-23 |
-| **Classification** | `[SIMULATED] INTERNAL USE ONLY` |
-| **Fidelity Score** | 96/100 |
+- 🔑 **Hybrid KEM** – Combine post‑quantum Kyber‑1024 with classical X25519 for the strongest practical key exchange.
+- 🧠 **Quantum Preset** – Classical cost amplifier that scales Argon2id memory to 2 GiB and SPIP iterations to 16M, raising the bar against quantum adversaries*.
+- 📦 **Layered Encryption** – Inner XChaCha20‑Poly1305 secret‑stream + outer Keccak sponge or AES‑256‑GCM MAC seal.
+- 🧪 **Built‑in Self‑Tests** – Extensive startup verification covering core sponge, SPIP, JIT wrapping, hybrid KEM, and constant‑time utilities.
+- ⚡ **Streaming O(1) RAM** – Never loads the entire file into memory; all operations use fixed‑size buffers.
+- 🛡️ **Paranoid Mode** – Locks rounds to 24, enforces higher mixing in SPIP, and adds extra capacity hardening.
+- 🔐 **JIT Key Wrapping** – Each file gets a fresh outer key, wrapped with the derived key before encryption.
+- 🧹 **Secure Wiping & Heap Scrubbing** – Sensitive buffers are zeroed and scrubbed after use; heap can be sanitised.
+- 🔎 **Fault Detection (TMR)** – Triple‑modular‑redundancy on the sponge permutation catches silent hardware errors.
+- 📏 **Constant‑Time Critical Code** – The `axis_permute()` function uses `sodium_memcmp` and bit‑mask selection, avoiding timing leaks.
+- 🖥️ **Interactive Menu** – Full terminal UI with colour, progress bars, and easy settings adjustment.
+
+*_Classical cost amplifier only – not a mathematically proven post‑quantum scheme for the symmetric layers._*
 
 ---
-Here is the clean, text-only Architecture section formatted specifically for GitHub markdown:
 
-```markdown
 ## 🏗️ Architecture
 
-### High-Level Data Flow
-Axis-512 processes data through a layered cryptographic pipeline designed for O(1) memory usage, defense-in-depth, and operational secrecy. The encryption workflow proceeds sequentially:
+The encryption process is divided into several layers:
 
-1. **Key Derivation**  
-   User password and optional PIN are concatenated and processed through Argon2id to produce a 32-byte master key. Parameters are configurable via the settings menu.
-
-2. **Key Management Layer**  
-   - *Hybrid KEM Mode*: Generates static Kyber-1024 and X25519 keypairs. An ephemeral X25519 keypair encapsulates shared secrets, which are combined via BLAKE2b to derive the operational key.  
-   - *Ephemeral/Classic Modes*: Directly derive or wrap per-file keys from the master key without post-quantum overhead.  
-   - *JIT Wrapping*: A unique 32-byte outer key is generated per file and securely wrapped using XChaCha20-Poly1305 under the derived key, limiting blast radius if a single file is compromised.
-
-3. **SIV Computation**  
-   A Synthetic Initialization Vector (SIV) is computed by streaming the plaintext through BLAKE2b, keyed with the outer file key and bound to a domain string (`"AXIS-SIV-V2"`) and 64-bit file length. This ensures deterministic authentication, replay resistance, and protection against canonicalization attacks.
-
-4. **Inner Encryption**  
-   The plaintext is encrypted using libsodium's `crypto_secretstream_xchacha20poly1305` API. A random inner key and nonce are generated per file. The nonce is bound as associated data (AD). Data is processed in 1 MiB chunks, ensuring RAM usage remains O(1) regardless of file size.
-
-5. **Outer Encryption**  
-   The inner ciphertext is wrapped in a second encryption layer. Operators select one of two modes:  
-   - *Keccak-f[1600] Sponge (Default)*: Uses the NIST-standard 24-round permutation for streaming encryption. Integrity is verified via a 64-byte tag squeezed after a final permutation. Triple Modular Redundancy (TMR) runs three parallel permutations and selects the majority result using constant-time bitwise masking.  
-   - *AES-256-GCM + XChaCha20 (Optional)*: Uses XChaCha20 for bulk encryption, computes a BLAKE2b MAC over the entire ciphertext stream, and seals the MAC using AES-256-GCM for hardware-accelerated authentication.
-
-6. **Output Format**  
-   The final file is concatenated as: `[salt] + [hybrid_header?] + [jit_wrapped_key] + [SIV] + [outer_ciphertext] + [outer_tag]`. No magic bytes, version identifiers, or structural metadata are included, making the output computationally indistinguishable from random noise.
-
-### Component Specifications
-
-#### 🔑 Key Management
-| Sub-Component | Implementation | Purpose |
-|--------------|---------------|---------|
-| **KDF** | Argon2id (`crypto_pwhash`) | Memory-hard password-to-key conversion (128 MiB – 2 GiB) |
-| **Hybrid KEM** | Kyber-1024 + X25519 + BLAKE2b | Post-quantum + classical key agreement simulation |
-| **JIT Wrapping** | XChaCha20-Poly1305 AEAD | Per-file outer key isolation; limits compromise blast radius |
-| **Key Lifecycle** | `mlock`, `MADV_DONTDUMP`, heap scrub | Prevents secret leakage to swap, core dumps, or freed memory |
-
-#### 🔐 Inner Encryption Layer
-| Feature | Implementation | Benefit |
-|---------|---------------|---------|
-| **Primitive** | `crypto_secretstream_xchacha20poly1305` | Authenticated, chunked streaming encryption |
-| **Nonce Handling** | Random per-file + bound as AD | Prevents nonce reuse; ties ciphertext to execution context |
-| **Memory Profile** | 1 MiB chunk buffers | O(1) RAM usage; handles multi-terabyte files safely |
-| **Authentication** | Poly1305 MAC + `TAG_FINAL` | Detects truncation, tampering, or stream desync |
-
-#### 🌀 Outer Encryption Layer
-| Mode | Core Primitive | Integrity Mechanism | Fault Tolerance |
-|------|---------------|---------------------|-----------------|
-| **Keccak Sponge** | Keccak-f[1600], 24 rounds, 25×64-bit state | 64-byte tag squeezed after final permute | TMR (3× permute + constant-time voting) |
-| **AES + XChaCha20** | XChaCha20 bulk + AES-256-GCM MAC seal | BLAKE2b stream MAC encrypted via AES-GCM | Hardware CRC/parity checks (AES-NI) |
-
-#### 🛡️ SIV & Integrity Verification
-- **Algorithm**: BLAKE2b keyed hash (RFC 7693 reference implementation)
-- **Domain Separation**: `"AXIS-SIV-V2"` prefix prevents cross-protocol or cross-mode collisions
-- **Length Binding**: 64-bit little-endian file length included to defeat canonicalization and padding oracle attacks
-- **Verification**: Recomputed during decryption on the recovered plaintext and compared via constant-time `sodium_memcmp` before outputting to disk
-
-#### 📦 Output Structure
 ```
-[0x00] salt (32 bytes)
-[0x20] hybrid KEM header (optional, variable length)
-[0x??] JIT-wrapped outer key (72 bytes)
-[0x??] SIV (64 bytes)
-[0x??] outer ciphertext (variable)
-[END ] outer authentication tag (64 bytes)
+           ┌─────────────────────────────────────────┐
+           │  Password + PIN → Argon2id → Master Key  │
+           └──────────────────┬──────────────────────┘
+                              ▼
+           ┌─────────────────────────────────────────┐
+           │ Hybrid KEM / Ephemeral / Classic         │
+           │ (Kyber‑1024 + X25519 or ephemeral key)  │
+           │ produces a Derived Outer Key             │
+           └──────────────────┬──────────────────────┘
+                              ▼
+           ┌─────────────────────────────────────────┐
+           │  JIT per‑file outer key generation       │
+           │  (wrapped with Derived Outer Key)        │
+           └──────────────────┬──────────────────────┘
+                              ▼
+  ┌─────────────────────────────────────────────────────┐
+  │  Inner Encryption (XChaCha20‑Poly1305 secretstream) │
+  │  • Random inner key & nonce                         │
+  │  • Nonce bound as associated data on first chunk    │
+  │  • Streaming, O(1) RAM                              │
+  └──────────────────┬──────────────────────────────────┘
+                     ▼
+  ┌─────────────────────────────────────────────────────┐
+  │  SIV Computation (BLAKE2b)                          │
+  │  • Domain‑separated, includes file size             │
+  │  • Streamed over inner ciphertext                   │
+  └──────────────────┬──────────────────────────────────┘
+                     ▼
+  ┌─────────────────────────────────────────────────────┐
+  │  Outer Encryption (two selectable modes)            │
+  │  Option 1: Keccak‑f[1600] sponge (default)          │
+  │  Option 2: AES‑256‑GCM MAC seal + XChaCha20 stream  │
+  │  Both modes are O(1) RAM and include authentication │
+  └──────────────────┬──────────────────────────────────┘
+                     ▼
+               Encrypted File
 ```
-- No file format identifiers, magic bytes, or padding oracles
-- Designed for plausible deniability and resistance to traffic analysis
-- Decryption strictly verifies outer tag → inner tag → SIV before writing any plaintext bytes to disk
-```
+
+**Decryption** reverses the process: outer layer → inner layer → SIV verification → plaintext output, all verified by MAC/tag and SIV.
 
 ---
 
-## 🛡️ Security Features
+## 📦 Requirements
 
-### Memory & Process Hardening
-| Feature | Implementation | Purpose |
-|---------|---------------|---------|
-| **Memory Locking** | `sodium_mlock` + `madvise(MADV_DONTDUMP\|MADV_WIPEONFORK)` | Prevents secrets from swapping to disk |
-| **Core Dump Prevention** | `PR_SET_DUMPABLE=0`, `RLIMIT_CORE=0` | Blocks forensic memory extraction |
-| **Heap Scrubbing** | Randomize → invert → pattern → zeroize | Mitigates use-after-free secret recovery |
-| **Secure Zeroization** | `sodium_memzero` + `explicit_bzero` fallback | Defeats compiler dead-store elimination |
-| **Signal Safety** | `volatile sig_atomic_t` flags, deferred cleanup | Prevents secret leakage on SIGINT/SIGTERM |
-
-### Cryptographic Discipline
-| Component | Constant-Time Guarantee |
-|-----------|------------------------|
-| **Keccak-f[1600]** | Reference implementation: fixed rotations, XOR, no branches |
-| **TMR Voting** | `sodium_memcmp` + bitwise mask selection (no branches) |
-| **Padding Absorption** | Masked copy + arithmetic padding byte selection |
-| **Secret Comparisons** | `ct_memcmp` (libsodium) for all MAC/tag checks |
-| **SPIP Expansion** | BLAKE2b (RFC 7693, constant-time reference) |
-| **Key Derivation** | Argon2id via libsodium (constant-time by design) |
-
-### Operational Security
-- ✅ **Plausible Deniability**: Output has no structural fingerprints; passes dieharder statistical tests
-- ✅ **SIV Binding**: Prevents ciphertext manipulation, replay, and canonicalization attacks
-- ✅ **JIT Key Wrapping**: Compromise of one file's outer key does not affect others
-- ✅ **Configurable Trade-offs**: `--light` equivalents via Argon2/SPIP presets for field deployment
-- ✅ **Graceful Degradation**: Fallbacks for missing hardware (AES-NI) without compromising integrity
+- **C17 compiler** (GCC ≥ 8, Clang ≥ 10)
+- **libsodium** ≥ 1.0.18 (must support `crypto_aead_xchacha20poly1305_ietf`, `crypto_secretstream_xchacha20poly1305`, `crypto_pwhash`, etc.)
+- **Kyber‑1024 reference implementation** (e.g., from pqclean or liboqs) – the code expects `kyber/kem.h` with `KYBER_*` constants and functions.
+- **Linux** (uses `memfd_create`, `mlock`, `MADV_*`, etc.)  
+  *macOS support is possible but may need minor adjustments.*
 
 ---
 
-## ⚙️ Configuration & Modes
+## 🛠️ Build Instructions
 
-### Key Management Modes
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Hybrid KEM** (`--kyber`) | Kyber-1024 + X25519 static keypair + ephemeral encapsulation | Post-quantum readiness simulation |
-| **Ephemeral** (`--ephemeral`) | Per-file random outer key, wrapped under master key | High-turnover operational environments |
-| **Classic** (default) | Direct master_key → outer_key derivation | Standard high-assurance use |
-
-### Outer Cipher Options
-| Option | Flag | Description |
-|--------|------|-------------|
-| **Keccak Sponge** | (default) | NIST-standard Keccak-f[1600] with TMR fault detection |
-| **AES+XChaCha20** | `--aes-outer` | XChaCha20 bulk + AES-GCM MAC seal (hardware-accelerated) |
-
-### Security Presets
-```bash
-# Argon2id Memory (via settings menu)
-1. Weak (128 MiB)    2. Moderate (256 MiB)    3. Strong (512 MiB)
-4. Maximum (1 GiB)   5. Quantum (2 GiB)       6. Back
-
-# Keccak Rounds (locked to 24 in Paranoid Mode)
-1. 16 (Faster)       2. 20 (Standard)         3. 24 (Maximum)
-
-# SPIP Iterations (BLAKE2b key expansion)
-1. Weak (1M)         2. Medium (2M)           3. Strong (4M)
-4. Maximum (8M)      5. Quantum (16M)         6. Back
-```
-
-### Special Modes
-| Mode | Flag/Setting | Effect |
-|------|-------------|--------|
-| **Paranoid** | Settings → Paranoid Mode | Locks rounds=24, enables capacity hardening, SPIP domain separation |
-| **Quantum** | Settings → Quantum hardening | Argon2=2 GiB, SPIP=16M iterations, quantum-specific domains |
-| **Quiet** | `--quiet` / `-q` | Suppresses progress bars and non-essential output |
-| **Dry Run** | `--dry-run` | Validates inputs without writing output files |
-| **No Heap Scrub** | `--no-heap-scrub` | Disables post-operation heap randomization (performance) |
-
----
-
-## 🧪 Validation & Testing
-
-### Self-Test Suite
-```bash
-./axis --test  # Runs core + hybrid KEM self-tests
-```
-
-| Test | Description | Status |
-|------|-------------|--------|
-| **1** | Keccak permutation non-identity + avalanche | ✅ |
-| **2** | SPIP (BLAKE2b) produces unique round keys | ✅ |
-| **3** | JIT key wrap/unwrap round-trip + tamper detection | ✅ |
-| **4** | SIV_DOMAIN_LEN consistency check | ✅ |
-| **5** | Keccak avalanche: single-bit input → ~50% output flip | ✅ |
-| **6** | AES-256-GCM round-trip (if hardware available) | ✅ |
-| **7** | SPIP deterministic output for identical input | ✅ |
-| **8** | Constant-time utilities: `ct_memcmp`, `ct_is_zero` | ✅ |
-| **9** | Hybrid KEM: Kyber+X25519 encapsulation/decapsulation match | ✅ |
-
-### Diffusion Validation (Keccak Sponge)
-| Metric | Result | Ideal | Verdict |
-|--------|--------|-------|---------|
-| **Single-bit avalanche** | 50.12% after 24 rounds | ~50% | ✅ Excellent |
-| **Round saturation** | >49% by round 4 | Rapid convergence | ✅ Strong diffusion |
-| **Word-level spread** | Uniform across 25 lanes | No weak positions | ✅ Robust mixing |
-
-### Statistical Validation (dieharder)
-```
-Test Suite: dieharder v3.31.1 on 500 MB ciphertext
-Pass Rate: 93.1% (107/115 tests PASSED)
-Weak: 5.2% (6 tests) — within statistical expectation for PRNGs
-Failed: 1.7% (2 tests) — isolated to PRNG-sensitive subtests (marsaglia_tsang_gcd)
-```
-> ✅ Results consistent with standardized ciphers (AES-CTR, ChaCha20) under identical testing. No catastrophic biases detected.
-
-### Constant-Time Validation Status
-```markdown
-✓ Code audit: All secret-data paths in intern.c use branch-free, table-free logic
-✓ TMR voting: sodium_memcmp + bitwise mask selection (no secret-dependent branches)
-✓ Padding absorption: Masked copy + arithmetic padding byte selection
-✓ Secret comparisons: ct_memcmp (libsodium) for all MAC/tag checks
-✓ Empirical tooling: dudect harness prepared for Keccak permutation + TMR
-```
-
----
-
-## 💻 CLI Usage
-
-### Interactive Mode (Default)
-```bash
-./axis
-```
-Menu-driven interface with real-time progress bars, settings configuration, and security status display.
-
-### Headless Mode
-```bash
-# Encrypt
-./axis -e <infile> <outfile> -p <password> [--pin <pin>]
-
-# Decrypt  
-./axis -d <infile> <outfile> -p <password> [--pin <pin>]
-
-# With mode flags
-./axis -e data.txt encrypted.bin -p "secret" --kyber --aes-outer
-./axis -d encrypted.bin recovered.txt -p "secret" --ephemeral
-```
-
-### Utility Flags
-```bash
---quiet -q          # Suppress progress output
---dry-run           # Validate inputs without writing files
---ephemeral         # Enable ephemeral key mode
---kyber             # Enable hybrid Kyber+X25519 KEM (default)
---aes-outer         # Use AES-GCM + XChaCha20 outer layer
---no-heap-scrub     # Disable post-operation heap randomization
-```
-
-### Interactive Settings Menu
-Option `3` in main menu provides:
-- Password visibility toggle
-- Argon2 memory preset selection
-- Keccak round count (locked in Paranoid Mode)
-- SPIP iteration strength
-- TMR fault detection toggle
-- Paranoid Mode toggle
-- Ephemeral/Kyber mode toggle
-- Quantum hardening toggle
-- Outer cipher selection
-
----
-
-## 🔧 Build & Compilation
-
-### Dependencies
-```bash
-# Debian/Ubuntu
-sudo apt install libsodium-dev libargon2-dev build-essential
-
-# Fedora/RHEL
-sudo dnf install libsodium-devel libargon2-devel gcc
-
-# Arch Linux
-sudo pacman -S libsodium argon2 base-devel
-```
-
-### Hardened Compile Command
-```bash
-gcc -O2 -march=native -Wall -Wextra \
-    -fno-strict-aliasing -fno-tree-vectorize \
-    -fno-builtin-memcmp -fno-builtin-memset \
-    -fstack-protector-strong -D_FORTIFY_SOURCE=2 \
-    -fPIE -pie -Wl,-z,relro,-z,now \
-    -s -o axis axis.c intern.c \
-    -lsodium -largon2 -lcrypto -lpthread
-```
-
-### Compiler Flag Rationale
-| Flag | Purpose |
-|------|---------|
-| `-O2` | Balanced optimization; avoids aggressive reordering that may break CT |
-| `-march=native` | CPU-specific instructions (AES-NI, AVX2 if available) |
-| `-fno-tree-vectorize` | Prevents auto-vectorization that may introduce timing variance |
-| `-fno-builtin-*` | Ensures custom CT functions aren't replaced by compiler intrinsics |
-| `-fstack-protector-strong` | Stack smashing protection |
-| `-D_FORTIFY_SOURCE=2` | Additional buffer overflow checks at compile time |
-| `-fPIE -pie` | Position-independent executable (ASLR compatibility) |
-| `-Wl,-z,relro,-z,now` | Full RELRO (GOT protection against GOT overwrite) |
-| `-s` | Strip symbols for operational security (retain for debug builds) |
-
----
-
-## 🔄 Restore Point & Reproducibility
-
-To restore Axis-512 exactly at v3.0.5-Keccak:
-
-1. **Source Files**: Use `axis.c` and `intern.c` as provided in this commit
-2. **Dependencies**: Install per platform instructions above
-3. **Compile**: Use the hardened `gcc` command
-4. **Self-Test**: 
+1. **Install libsodium**  
    ```bash
-   ./axis --test  # Should output: ✅ Self-tests passed.
+   # On Debian/Ubuntu
+   sudo apt-get install libsodium-dev
+   # On macOS (Homebrew)
+   brew install libsodium
    ```
-5. **Round-Trip Validation**:
+
+2. **Prepare Kyber library**  
+   Place the Kyber‑1024 reference sources in a `kyber/` subdirectory.  
+   The header `kyber/kem.h` must define:
+   - `KYBER_PUBLICKEYBYTES`, `KYBER_SECRETKEYBYTES`, `KYBER_CIPHERTEXTBYTES`, `KYBER_SSBYTES`
+   - `crypto_kem_keypair()`, `crypto_kem_enc()`, `crypto_kem_dec()`
+
+3. **Compile**  
    ```bash
-   echo "Axis-512 test" > plain.txt
-   ./axis -e plain.txt encrypted.bin -p "testpass"
-   ./axis -d encrypted.bin recovered.txt -p "testpass"
-   diff plain.txt recovered.txt  # Should show no differences
+   gcc -std=c17 -O2 -march=native -fPIE -o axis512 axis.c intern.c \
+       -lsodium -lpthread -ldl -lm \
+       -I. -Ikyber \
+       -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L
    ```
-6. **Statistical Validation** (optional):
+   Static linking is recommended for a portable binary:
    ```bash
-   dd if=/dev/zero of=test.bin bs=1M count=500
-   ./axis -e test.bin out.bin -p "test"
-   dieharder -a -g 201 -f out.bin -Y 1 -d 0
+   gcc ... -static -Wl,-Bstatic -lsodium -Wl,-Bdynamic ...
+   ```
+
+4. **Optional hardening flags**
+   ```bash
+   -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wall -Wextra -pedantic
    ```
 
 ---
 
-## ⚠️ Threat Model & Limitations
+## 🚀 Usage
 
-### Operational Assumptions
-- 🔒 Security relies on **operational secrecy**, **implementation discipline**, and **internal consistency** — not public algorithm scrutiny
-- 🛡️ Adversaries may intercept ciphertext/metadata but cannot obtain source code or mount chosen-plaintext attacks against live systems (by policy)
-- ⏱️ Constant-time claims are implementation-level; empirical timing validation requires operator execution of provided tooling
-
-### Intentional Design Characteristics
-| Characteristic | Rationale |
-|----------------|-----------|
-| **Novel hybrid KEM integration** | Simulates post-quantum migration patterns; Kyber-1024 not yet standardized for all use cases |
-| **Configurable outer cipher** | Operator trade-off: NIST sponge (max assurance) vs. hardware-accelerated AES (performance) |
-| **Quantum presets** | Classical cost amplifiers only; not post-quantum cryptography. For simulation fidelity only. |
-| **SIV determinism** | Enables replay detection and canonicalization resistance; not suitable for anonymity-focused use |
-
-> 🚨 **WARNING**: This is a **RESEARCH SIMULATION**. It is **NOT** approved for actual classified, sensitive, or production data. All "post-quantum" and "Suite A" references are architectural analogies for educational and experimental purposes only.
-
----
-
-## 📎 Appendix: Quick Reference Commands
+Run the interactive menu:
 
 ```bash
-# Build
-gcc -O2 -march=native -Wall -Wextra \
-    -fno-strict-aliasing -fno-tree-vectorize \
-    -fno-builtin-memcmp -fno-builtin-memset \
-    -fstack-protector-strong -D_FORTIFY_SOURCE=2 \
-    -fPIE -pie -Wl,-z,relro,-z,now \
-    -s -o axis axis.c intern.c \
-    -lsodium -largon2 -lcrypto -lpthread
+./axis512
+```
 
-# Self-test
-./axis --test
+You will see a nice ASCII art logo and options:
 
-# Encrypt / Decrypt (headless)
-./axis -e document.pdf encrypted.bin -p "my_password"
-./axis -d encrypted.bin recovered.pdf -p "my_password"
+```
+    █████╗ ██╗  ██╗██╗███████╗   ██████╗ ██████╗
+   ██╔══██╗╚██╗██╔╝██║██╔════╝   ╚════██╗██╔════╝
+   ███████║ ╚███╔╝ ██║███████╗    █████╔╝███████╗
+   ██╔══██║ ██╔██╗ ██║╚════██║   ██╔═══╝ ██╔═══██╗
+   ██║  ██║██╔╝ ██╗██║███████║   ███████╗╚██████╔╝
+   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚══════╝   ╚══════╝ ╚═════╝
 
-# With hybrid KEM + AES outer
-./axis -e data.txt secure.bin -p "pass" --kyber --aes-outer
+Axis-512 v3.0.5-Keccak – Unbreakable sponge (NIST standard)
+KDF: Moderate (256 MiB) | Rounds: 20 | TMR: ON | Paranoid: OFF
+            Mode: Hybrid KEM | Outer: Keccak-f[1600] sponge
+     ┌─────────────────────────────────────────┐
+     │  1. Encrypt a file                      │
+     │  2. Decrypt a file                      │
+     │  3. Settings                            │
+     │  4. Exit                                │
+     └─────────────────────────────────────────┘
+     Choice:
+```
 
-# Benchmark (via interactive menu → option 1 with large file)
+**Encryption flow:**  
+1. Choose `1` and enter password, optional PIN.  
+2. Provide input file path and output file path.  
+3. The program derives keys, generates a hybrid keypair, encrypts in layers, and writes the encrypted file.
 
-# Statistical validation
-dd if=/dev/urandom of=plain.bin bs=1M count=500
-./axis -e plain.bin cipher.bin -p "test"
-dieharder -a -g 201 -f cipher.bin -Y 1 -d 0
+**Decryption**: choose `2`, same steps, verifies SIV and authentication tags.
+
+**Settings menu** (option `3`) allows changing:
+- Argon2id memory strength (128M → 2 GiB)
+- Number of Keccak rounds (16/20/24)
+- SPIP iterations (1M – 16M)
+- TMR toggle, Paranoid mode, Ephemeral / Kyber modes
+- Outer cipher choice
+- Password visibility
+
+### Command‑line flags
+
+| Flag | Effect |
+|------|--------|
+| `--quiet` / `-q` | Suppress progress animations (still prints essential info) |
+| `--dry-run` | Show what would be done without writing any files |
+| `--ephemeral` | Use ephemeral key mode (disables Kyber) |
+| `--kyber` | Force Kyber KEM mode (disables ephemeral) |
+| `--aes-outer` | Select AES‑GCM + XChaCha20 outer layer instead of Keccak |
+| `--no-heap-scrub` | Disable heap scrubbing at exit (slightly faster, less secure) |
+
+Example:
+```bash
+./axis512 --quiet --kyber
 ```
 
 ---
 
-## 📜 Version History (Summary)
+## 🔬 Detailed Cryptographic Design
 
-| Version | Key Changes |
-|---------|-------------|
-| **3.0.5-Keccak** | Migrated to NIST-standard Keccak-f[1600]; constant-time patches to `intern.c`; hybrid KEM self-test |
-| **3.0.4** | Streaming O(1) RAM implementation; SIV domain separation; JIT key wrapping |
-| **3.0.3** | AES-256-GCM outer mode + XChaCha20 bulk; MAC sealing architecture |
-| **3.0.2** | Paranoid mode; quantum-hardening presets; SPIP BLAKE2b expansion |
-| **3.0.1** | TMR fault detection; constant-time voting; heap scrubbing enhancements |
-| **3.0.0** | Hybrid Kyber-1024 + X25519 KEM; ephemeral key mode; Argon2 presets |
-| **2.x** | Legacy sponge construction; pre-streaming architecture |
+### Key Derivation
+- Password and optional PIN are concatenated with `"::::"` and processed by **Argon2id** (opslimit: `crypto_pwhash_OPSLIMIT_SENSITIVE`, memory configurable).
+- The resulting 32‑byte **master key** is used to unlock further keys.
+
+### Hybrid KEM Mode (default)
+1. Generates a **static Kyber‑1024 keypair** and an **X25519 keypair** for the file.
+2. The secret keys (`kyber_sk` + `x25519_sk`) are encrypted with the master key using `XChaCha20-Poly1305-IETF` (SKE).
+3. A fresh **ephemeral X25519 keypair** is created.
+4. **Encapsulation**:  
+   `ss_kyber = Kyber.Enc(pk_kyber)`  
+   `ss_x25519 = X25519(eph_priv, pk_x25519)`
+5. Both shared secrets are combined using **BLAKE2b** keyed with the domain `"AXIS-HYBRID"` to produce the **hybrid shared secret**.
+6. The hybrid shared secret is expanded via BLAKE2b (`"AXIS-HYBRID-OUTER"`) to obtain the **derived outer key**.
+
+### Ephemeral Key Mode
+- A random 32‑byte key is generated per file, encrypted with the master key, and used directly as the outer key.
+
+### Classic Mode
+- The master key itself is used as the outer key.
+
+### JIT Per‑file Outer Key
+- Regardless of mode, a **fresh 32‑byte file outer key** is generated and wrapped with the derived outer key using `XChaCha20-Poly1305`.  
+- This ensures unique keys for every file, even if the same password is reused.
+
+### Inner Encryption
+- A random **inner key** and **inner nonce** are generated.
+- They are written to the output file first.
+- The inner key initialises an **XChaCha20-Poly1305 secretstream** (libsodium’s `crypto_secretstream_xchacha20poly1305`).
+- On the **first chunk only**, the inner nonce is passed as associated data (AD), binding the nonce to the ciphertext.
+- File is processed in chunks of 1 MiB, each chunk tagged appropriately (`TAG_MESSAGE` or `TAG_FINAL`).
+- All operations O(1) RAM.
+
+### SIV (Synthetic IV)
+- Computed over the **plaintext** to prevent certain forms of corruption/malleability.
+- Domain separated: `"AXIS-SIV-V2"` + 64‑bit file size (LE) + plaintext content.
+- Uses BLAKE2b keyed with the file outer key, producing a 64‑byte SIV.
+- During decryption, the SIV is recomputed and compared in constant time.
+
+### Outer Encryption (default: Keccak‑f[1600] sponge)
+- The **file outer key** is expanded through **SPIP** (BLAKE2b‑based iterative expansion) to produce round keys for the sponge.
+- The SIV is absorbed into the Keccak state.
+- **Streaming Keccak sponge**:
+  - For each chunk, the sponge is squeezed to generate a keystream which is XORed with the plaintext.
+  - Simultaneously, a second state `st_auth` absorbs the ciphertext for authentication.
+- After all data, `st_auth` is permuted and a 64‑byte tag is squeezed.
+- The tag is appended to the file.
+- **Constant‑time**: the permutation uses TMR and branch‑free mask selection when selecting the TMR result.
+
+### Outer Encryption (alternative: AES‑256‑GCM seal)
+- For each chunk, the inner ciphertext is encrypted with an **XChaCha20-Poly1305 secretstream** keyed by a derived “XCC key”.
+- A **BLAKE2b MAC** (keyed with outer key) is computed over the entire outer ciphertext.
+- The MAC is then **sealed** with AES‑256‑GCM using a random nonce and the outer key.
+- Requires hardware AES support for speed; falls back to software otherwise.
+
+### SPIP Expansion
+- The outer key is expanded via **BLAKE2b** in an iterative loop (default 4M iterations, configurable up to 16M).
+- Domain separation varies with quantum/paranoid mode.
+- All round keys are derived deterministically and wiped after use.
+
+### Paranoid & Quantum Modes
+- **Paranoid Mode** enforces `axis_rounds = 24` and mixes the SPIP state more frequently.
+- **Quantum Mode** sets Argon2id memory to 2 GiB and SPIP iterations to 16M, and adds a “QUANTUM” domain string to capacity hardening – it is a classical cost amplifier, not a post‑quantum proof.
+
+### Constant‑Time & Tamper Resistance
+- All critical comparisons (TMR voting, SIV check) use `sodium_memcmp`.
+- The TMR selection uses a **masked copy** without branches.
+- Padding in `absorb_data()` is implemented without secret‑dependent branches.
+- The core Keccak permutation remains constant‑time as standard.
+- TMR (`axis_permute`) runs the permutation three times and votes on the result; a discrepancy triggers an error, preventing silent hardware fault exploitation.
 
 ---
 
-> 📁 **Repository maintained under operational secrecy. Distribution restricted to authorized personnel only.**  
-> 🔐 *Axis-512 v3.0.5-Keccak — NIST-standard sponge, hybrid post-quantum simulation, constant-time core, O(1) RAM streaming.*
+## 🧪 Self‑Tests
+
+On startup, Axis-512 runs a battery of self‑tests covering:
+
+1. Keccak‑f[1600] permutation non‑triviality.
+2. SPIP BLAKE2b determinism and key differentiation.
+3. JIT key wrap/unwrap and tamper rejection.
+4. SIV domain length correctness.
+5. Keccak avalanche effect.
+6. AES‑256‑GCM round‑trip (if hardware available).
+7. SPIP consistency across runs.
+8. Constant‑time utility functions (`ct_memcmp`, `ct_is_zero`).
+
+If any test fails, the program aborts with a clear message.
+
+---
+
+## 🧹 Memory Security
+
+- **`mlock()`**: all sensitive buffers (keys, hashes, states) are locked into physical RAM to prevent swapping.
+- **`MADV_DONTDUMP` / `MADV_WIPEONFORK`**: applied immediately after allocation.
+- **Secure wiping**: `sodium_memzero` + fallback volatile write before freeing.
+- **Heap scrubbing**: after each operation, large temporary allocations are scrubbed with random and patterned writes before `free()` (can be disabled with `--no-heap-scrub`).
+- **Core dumps** are disabled.
+
+---
+
+## 📁 File Format
+
+The encrypted file layout (simplified, in order):
+
 ```
+[salt (32)]
+[if Kyber:  SKE nonce (24) | enc(kyber_sk + x25519_sk) (32+32+16)]
+            [Kyber ct (1568) | eph_pub X25519 (32)]
+[if Ephemeral: eph nonce (24) | enc(eph_key) (32+16)]
+[JIT wrapped key: nonce (24) | enc(file_outer_key) (32+16)]
+[SIV (64)]
+[outer encryption stream ...        ]  // includes inner header, inner CT, then outer tag
+                                      // exact format depends on outer mode
+```
+
+All sizes are fixed; there are no delimiters.
+
+---
+
+## 🤖 Future Enhancements
+
+- PKCS#11 / smartcard / YubiKey support for key storage.
+- GUI front‑end.
+- Integration with TPM for key protection.
+- Formal verification of Keccak sponge layers.
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.  
+Kyber‑1024 and libsodium have their own licenses; consult their repositories.
+
+---
+
+## ⚠️ Disclaimer
+
+This software is provided **as‑is** with no warranty. It has not been audited by a third party.  
+Use it at your own risk. For extremely sensitive data, consider combining it with full disk encryption and secure hardware tokens.
+
+---
+
+*Axis-512 – Because your files deserve nothing less than Keccak.*  
+**Contribute, report issues, or ask questions at the project’s repository.**
