@@ -11,6 +11,16 @@
 
 ---
 
+## 📸 Screenshot
+
+<div align="center">
+  <img src="screenshot.png" alt="Axis GUI Screenshot" width="800"/>
+  <br/>
+  <em>The Axis main dashboard — dark‑themed GTK interface for volume management</em>
+</div>
+
+---
+
 ## 🌌 Key Highlights
 
 *   🛡️ **State-of-the-Art Security Margin**: Full AES-256-GCM authenticated encryption providing cryptographic integrity and confidentiality at the hardware level.
