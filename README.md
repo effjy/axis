@@ -1,6 +1,7 @@
+<div align="center">
+
 # 🛰️ Axis v10.0.0 (Galactic Edition)
 
-<div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal?style=flat-square&labelColor=1a1a1a)](LICENSE)
 [![C Standard: C11](https://img.shields.io/badge/C_Standard-C11-teal?style=flat-square&labelColor=1a1a1a)](#)
