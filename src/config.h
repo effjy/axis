@@ -48,6 +48,14 @@
 #define VFS_MAX_FILENAME_LEN   256
 #define VFS_SECTOR_SIZE        4096
 
+/* Per-sector on-disk crypto overhead.
+ * Layout per sector: [random nonce 12 B][ciphertext 4096 B][GCM tag 16 B].
+ * The random nonce is generated fresh on every sector write, which prevents
+ * AES-GCM (key, nonce) reuse when a sector is overwritten in place. */
+#define PER_SECTOR_NONCE_SIZE  12
+#define PER_SECTOR_MAC_SIZE    16
+#define PER_SECTOR_OVERHEAD    (PER_SECTOR_NONCE_SIZE + PER_SECTOR_MAC_SIZE)
+
 #define KRAKKEN4_MAGIC         "KRAKKEN4"
 
 #endif /* CONFIG_H */

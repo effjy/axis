@@ -26,29 +26,29 @@
 #include <string.h>
 #include <sodium.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #define DEFAULT_CACHE_SIZE  4096
-#define PER_SECTOR_MAC_SIZE 16
 
 /* -------------------------------------------------------------------------
  * Internal helpers
  * ---------------------------------------------------------------------- */
 
-static void sector_nonce(uint64_t idx, uint8_t *nonce, size_t nonce_len) {
-    memset(nonce, 0, nonce_len);
-    for (size_t i = 0; i < 8 && i < nonce_len; i++)
-        nonce[i] = (uint8_t)((idx >> (i * 8)) & 0xFF);
-}
-
 /*
- * encrypt_sector_at – encrypt `plain` and write ciphertext+MAC to the file
- * at the correct offset for `sector_idx`.  Performs its own fseeko().
+ * encrypt_sector_at – encrypt `plain` and write nonce+ciphertext+MAC to the
+ * file at the correct offset for `sector_idx`.  Performs its own fseeko().
+ *
+ * A fresh random nonce is generated on every write and stored on disk ahead
+ * of the ciphertext.  This prevents AES-GCM (key, nonce) reuse when the same
+ * sector is overwritten in place — which a read-write filesystem does
+ * constantly.  The sector index is still bound as AAD to prevent sectors
+ * from being relocated/replayed.
  */
 static int encrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
                               const uint8_t *plain) {
-    const size_t sector_with_mac = VFS_SECTOR_SIZE + PER_SECTOR_MAC_SIZE;
+    const size_t sector_with_overhead = VFS_SECTOR_SIZE + PER_SECTOR_OVERHEAD;
     const off_t  file_off = (off_t)cache->data_offset
-                          + (off_t)sector_idx * (off_t)sector_with_mac;
+                          + (off_t)sector_idx * (off_t)sector_with_overhead;
 
     if (fseeko(cache->file, file_off, SEEK_SET) != 0)
         return -1;
@@ -58,11 +58,12 @@ static int encrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
                        cache->file_key, KEY_SIZE,
                        (const uint8_t *)&sector_idx, sizeof(sector_idx));
 
-    uint8_t nonce[NONCE_SIZE];
-    sector_nonce(sector_idx, nonce, NONCE_SIZE);
+    uint8_t nonce[PER_SECTOR_NONCE_SIZE];
+    random_bytes(nonce, PER_SECTOR_NONCE_SIZE);
 
     uint8_t cipher[VFS_SECTOR_SIZE], tag[PER_SECTOR_MAC_SIZE];
-    if (aes256gcm_encrypt(plain, VFS_SECTOR_SIZE, sector_key, nonce, NONCE_SIZE,
+    if (aes256gcm_encrypt(plain, VFS_SECTOR_SIZE, sector_key,
+                          nonce, PER_SECTOR_NONCE_SIZE,
                           (const uint8_t *)&sector_idx, sizeof(sector_idx),
                           cipher, tag) != VFS_SECTOR_SIZE) {
         secure_zero(sector_key, KEY_SIZE);
@@ -70,6 +71,8 @@ static int encrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
     }
     secure_zero(sector_key, KEY_SIZE);
 
+    if (fwrite(nonce, 1, PER_SECTOR_NONCE_SIZE, cache->file) != PER_SECTOR_NONCE_SIZE)
+        return -1;
     if (fwrite(cipher, 1, VFS_SECTOR_SIZE, cache->file) != VFS_SECTOR_SIZE)
         return -1;
     if (fwrite(tag, 1, PER_SECTOR_MAC_SIZE, cache->file) != PER_SECTOR_MAC_SIZE)
@@ -90,12 +93,13 @@ static int encrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
  */
 static int decrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
                               uint8_t *out_plain) {
-    const size_t sector_with_mac = VFS_SECTOR_SIZE + PER_SECTOR_MAC_SIZE;
+    const size_t sector_with_overhead = VFS_SECTOR_SIZE + PER_SECTOR_OVERHEAD;
     const off_t  file_off = (off_t)cache->data_offset
-                          + (off_t)sector_idx * (off_t)sector_with_mac;
+                          + (off_t)sector_idx * (off_t)sector_with_overhead;
 
     /* Reused across both attempts (overwritten each time). */
     uint8_t sector_key[KEY_SIZE];
+    uint8_t nonce[PER_SECTOR_NONCE_SIZE];
     uint8_t cipher[VFS_SECTOR_SIZE], stored_tag[PER_SECTOR_MAC_SIZE];
 
     /* ---- Attempt 1: file_key ---- */
@@ -106,17 +110,15 @@ static int decrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
                        cache->file_key, KEY_SIZE,
                        (const uint8_t *)&sector_idx, sizeof(sector_idx));
 
-    if (fread(cipher, 1, VFS_SECTOR_SIZE, cache->file) != VFS_SECTOR_SIZE ||
+    if (fread(nonce, 1, PER_SECTOR_NONCE_SIZE, cache->file) != PER_SECTOR_NONCE_SIZE ||
+        fread(cipher, 1, VFS_SECTOR_SIZE, cache->file) != VFS_SECTOR_SIZE ||
         fread(stored_tag, 1, PER_SECTOR_MAC_SIZE, cache->file) != PER_SECTOR_MAC_SIZE) {
         secure_zero(sector_key, KEY_SIZE);
         return -1;
     }
 
-    uint8_t nonce[NONCE_SIZE];
-    sector_nonce(sector_idx, nonce, NONCE_SIZE);
-
     if (aes256gcm_decrypt(cipher, VFS_SECTOR_SIZE, stored_tag,
-                          sector_key, nonce, NONCE_SIZE,
+                          sector_key, nonce, PER_SECTOR_NONCE_SIZE,
                           (const uint8_t *)&sector_idx, sizeof(sector_idx),
                           out_plain) == VFS_SECTOR_SIZE) {
         secure_zero(sector_key, KEY_SIZE);
@@ -124,7 +126,8 @@ static int decrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
     }
 
     /* ---- Attempt 2: master_key (backward compatibility) ---- */
-    /* Seek back to the same sector — the first read advanced the pointer. */
+    /* Seek back to the same sector — the first read advanced the pointer.
+     * The stored nonce was already read above and is reused here. */
     if (fseeko(cache->file, file_off, SEEK_SET) != 0) {
         secure_zero(sector_key, KEY_SIZE);
         return -1;
@@ -134,14 +137,15 @@ static int decrypt_sector_at(sector_cache_t *cache, uint64_t sector_idx,
                        cache->master_key, 32,
                        (const uint8_t *)&sector_idx, sizeof(sector_idx));
 
-    if (fread(cipher, 1, VFS_SECTOR_SIZE, cache->file) != VFS_SECTOR_SIZE ||
+    if (fread(nonce, 1, PER_SECTOR_NONCE_SIZE, cache->file) != PER_SECTOR_NONCE_SIZE ||
+        fread(cipher, 1, VFS_SECTOR_SIZE, cache->file) != VFS_SECTOR_SIZE ||
         fread(stored_tag, 1, PER_SECTOR_MAC_SIZE, cache->file) != PER_SECTOR_MAC_SIZE) {
         secure_zero(sector_key, KEY_SIZE);
         return -1;
     }
 
     if (aes256gcm_decrypt(cipher, VFS_SECTOR_SIZE, stored_tag,
-                          sector_key, nonce, NONCE_SIZE,
+                          sector_key, nonce, PER_SECTOR_NONCE_SIZE,
                           (const uint8_t *)&sector_idx, sizeof(sector_idx),
                           out_plain) == VFS_SECTOR_SIZE) {
         secure_zero(sector_key, KEY_SIZE);
@@ -411,7 +415,12 @@ int cache_flush_all(sector_cache_t *cache) {
                 return -1;
         }
     }
-    fflush(cache->file);
+    if (fflush(cache->file) != 0)
+        return -1;
+    /* Force data to durable storage so an acknowledged flush survives a
+     * crash or power loss instead of lingering in the kernel page cache. */
+    if (fsync(fileno(cache->file)) != 0)
+        return -1;
     return 0;
 }
 

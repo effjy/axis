@@ -58,7 +58,6 @@ SRCS = main.c \
        krakken_multi.c \
        permut2048.c \
        hybrid_kem.c \
-       aead.c \
        vfs.c \
        volume.c \
        sector_cache.c \

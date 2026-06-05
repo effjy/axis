@@ -13,45 +13,38 @@
 
 #define VOLUME_VERSION 4
 #define SECTOR_SIZE VFS_SECTOR_SIZE
-#define PER_SECTOR_MAC_SIZE 16
 #define HEADER_RESERVE 8192
 
-/* sector_nonce: encode sector index as little-endian into a zeroed nonce buffer */
-static void sector_nonce(uint64_t idx, uint8_t *nonce, size_t nonce_len) {
-    memset(nonce, 0, nonce_len);
-    for (size_t i = 0; i < 8 && i < nonce_len; i++)
-        nonce[i] = (idx >> (i * 8)) & 0xFF;
-}
-
+/* Encrypt one sector at the current file position, storing a fresh random
+ * nonce ahead of the ciphertext.  This matches the on-disk layout used by
+ * sector_cache.c: [nonce 12 B][ciphertext 4096 B][GCM tag 16 B].  Using a
+ * random per-write nonce avoids AES-GCM (key, nonce) reuse on overwrite. */
 static int encrypt_sector(FILE *f, uint64_t idx, const uint8_t *plain,
                           const uint8_t *master_key, size_t master_key_len, int use_domain_separator) {
     (void)use_domain_separator;
     /* Derive per-sector key using BLAKE2b */
     uint8_t sector_key[KEY_SIZE];
-    crypto_generichash(sector_key, KEY_SIZE, master_key, master_key_len, 
+    crypto_generichash(sector_key, KEY_SIZE, master_key, master_key_len,
                       (const uint8_t*)&idx, sizeof(idx));
 
-    uint8_t nonce[NONCE_SIZE];
-    sector_nonce(idx, nonce, NONCE_SIZE);
+    uint8_t nonce[PER_SECTOR_NONCE_SIZE];
+    random_bytes(nonce, PER_SECTOR_NONCE_SIZE);
 
     uint8_t cipher[SECTOR_SIZE], tag[PER_SECTOR_MAC_SIZE];
-    if (aes256gcm_encrypt(plain, SECTOR_SIZE, sector_key, nonce, NONCE_SIZE,
+    if (aes256gcm_encrypt(plain, SECTOR_SIZE, sector_key, nonce, PER_SECTOR_NONCE_SIZE,
                           (const uint8_t*)&idx, sizeof(idx),
                           cipher, tag) != SECTOR_SIZE) {
         secure_zero(sector_key, KEY_SIZE);
         return -1;
     }
-
-    if (fwrite(cipher, 1, SECTOR_SIZE, f) != SECTOR_SIZE) {
-        secure_zero(sector_key, KEY_SIZE);
-        return -1;
-    }
-    if (fwrite(tag, 1, PER_SECTOR_MAC_SIZE, f) != PER_SECTOR_MAC_SIZE) {
-        secure_zero(sector_key, KEY_SIZE);
-        return -1;
-    }
-    
     secure_zero(sector_key, KEY_SIZE);
+
+    if (fwrite(nonce, 1, PER_SECTOR_NONCE_SIZE, f) != PER_SECTOR_NONCE_SIZE)
+        return -1;
+    if (fwrite(cipher, 1, SECTOR_SIZE, f) != SECTOR_SIZE)
+        return -1;
+    if (fwrite(tag, 1, PER_SECTOR_MAC_SIZE, f) != PER_SECTOR_MAC_SIZE)
+        return -1;
     return 0;
 }
 
@@ -132,44 +125,59 @@ int volume_create(const char *path, size_t size_mb, const char *password,
     fflush(f);
     fseek(f, 0, SEEK_END);
 
-    /* Setup VFS in memory using temporary data area */
+    /* Setup VFS metadata (header + file table) in memory.  The data area is
+     * NOT materialized in RAM — sectors are streamed to disk one at a time so
+     * that creating a large (multi-GB / TB) volume does not require an
+     * equally large allocation. */
     vfs_context_t vfs;
     size_t total_bytes = size_mb * 1024 * 1024 - (SALT_SIZE + HEADER_NONCE_LEN + sizeof(encrypted_header));
-    size_t total_sectors = total_bytes / (SECTOR_SIZE + PER_SECTOR_MAC_SIZE);
+    size_t total_sectors = total_bytes / (SECTOR_SIZE + PER_SECTOR_OVERHEAD);
     vfs.data_size = total_sectors * SECTOR_SIZE;
-    
-    /* Use temporary data area for volume creation */
-    uint8_t *temp_data_area = calloc(1, vfs.data_size);
-    if (!temp_data_area) { fclose(f); return -1; }
-    lock_sensitive(temp_data_area, vfs.data_size);
-    
+
     vfs.cache = NULL;  /* No cache during creation */
     vfs_format_volume(&vfs);
-    
-    /* Create temporary data area with VFS header and file table */
-    memcpy(temp_data_area, &vfs.header, sizeof(vfs_header_t));
-    memcpy(temp_data_area + sizeof(vfs_header_t), vfs.files, sizeof(vfs_file_entry_t) * VFS_MAX_FILES);
+
+    /* Pack the VFS header and file table into a small metadata buffer that
+     * spans only the first few sectors.  Everything past it is zero-filled. */
+    size_t metadata_size = sizeof(vfs_header_t) + sizeof(vfs_file_entry_t) * VFS_MAX_FILES;
+    size_t header_sectors = (metadata_size + SECTOR_SIZE - 1) / SECTOR_SIZE;
+    if (header_sectors > total_sectors) { fclose(f); return -1; }
+
+    uint8_t *metadata_buf = calloc(header_sectors, SECTOR_SIZE);
+    uint8_t *zero_sector  = calloc(1, SECTOR_SIZE);
+    if (!metadata_buf || !zero_sector) {
+        free(metadata_buf); free(zero_sector);
+        secure_zero(file_key, KEY_SIZE);
+        fclose(f); return -1;
+    }
+    memcpy(metadata_buf, &vfs.header, sizeof(vfs_header_t));
+    memcpy(metadata_buf + sizeof(vfs_header_t), vfs.files,
+           sizeof(vfs_file_entry_t) * VFS_MAX_FILES);
 
     /* Write sectors with MACs using file_key for consistency with opening logic */
     for (size_t i = 0; i < total_sectors; i++) {
-        if (encrypt_sector(f, i, temp_data_area + i * SECTOR_SIZE, file_key, KEY_SIZE, 1) != 0) {
+        const uint8_t *plain = (i < header_sectors)
+                             ? metadata_buf + i * SECTOR_SIZE
+                             : zero_sector;
+        if (encrypt_sector(f, i, plain, file_key, KEY_SIZE, 1) != 0) {
             secure_zero(file_key, KEY_SIZE);
-            secure_zero(temp_data_area, vfs.data_size);
-            free(temp_data_area); fclose(f); return -1;
+            free(metadata_buf); free(zero_sector);
+            fclose(f); return -1;
         }
         if (progress_cb && (i % 256 == 0)) {
             int percent = 60 + (int)((i * 40) / total_sectors);
             progress_cb("Encrypting volume", percent, 100, user_data);
         }
     }
+    secure_zero(file_key, KEY_SIZE);
+    free(metadata_buf);
+    free(zero_sector);
+
+    if (fflush(f) != 0 || fsync(fileno(f)) != 0) { fclose(f); return -1; }
     fclose(f);
 
     /* Report completion */
     if (progress_cb) progress_cb("Volume created", 100, 100, user_data);
-
-    /* Scrub temporary data area before freeing */
-    secure_zero(temp_data_area, vfs.data_size);
-    free(temp_data_area);
     return 0;
 }
 
@@ -277,7 +285,7 @@ int volume_open(const char *path, const char *password, volume_context_t *vol,
     fseek(f, 0, SEEK_END);
     long file_end = ftell(f);
     size_t data_bytes = file_end - data_start;
-    size_t total_sectors = data_bytes / (SECTOR_SIZE + PER_SECTOR_MAC_SIZE);
+    size_t total_sectors = data_bytes / (SECTOR_SIZE + PER_SECTOR_OVERHEAD);
     vol->vfs.data_size = total_sectors * SECTOR_SIZE;
     
     /* Initialize cache with the file handle and keys.
@@ -356,6 +364,7 @@ int volume_open(const char *path, const char *password, volume_context_t *vol,
     vol->vfs.is_mounted = 0;
     vol->is_open = 1;
     strncpy(vol->path, path, sizeof(vol->path) - 1);
+    vol->path[sizeof(vol->path) - 1] = '\0';
     vol->file_handle = f;  /* Store file handle for cache operations */
     return 0;
 }
