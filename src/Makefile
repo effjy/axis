@@ -55,8 +55,6 @@ ALL_LDFLAGS = $(LDFLAGS) $(GTK_LIBS) $(SODIUM_LIBS) $(ARGON2_LIBS) $(FUSE_LIBS) 
 SRCS = main.c \
        $(GUI_SRCS) \
        utils.c \
-       krakken_multi.c \
-       permut2048.c \
        hybrid_kem.c \
        vfs.c \
        volume.c \

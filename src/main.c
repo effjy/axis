@@ -1,5 +1,4 @@
 #include "config.h"
-#include "permut2048.h"
 #include <sodium.h>
 #include <stdio.h>
 #include <sys/prctl.h>
@@ -22,10 +21,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: Failed to initialize libsodium\n");
         return 1;
     }
-    
-    /* Initialize Tsuki-2048 round constants */
-    init_rc_vectors();
-    
+
     printf("%s v%s - %s\n", APP_NAME, APP_VERSION, APP_TITLE);
     
     /* Check for unencrypted swap and warn user */

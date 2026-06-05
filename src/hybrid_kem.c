@@ -1,7 +1,6 @@
 #include "hybrid_kem.h"
 #include "config.h"
 #include "utils.h"
-#include "permut2048.h"
 #include <sodium.h>
 #include <string.h>
 #include <openssl/evp.h>
