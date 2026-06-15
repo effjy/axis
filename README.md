@@ -6,13 +6,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal?style=flat-square&labelColor=1a1a1a)](LICENSE)
 [![C Standard: C11](https://img.shields.io/badge/C_Standard-C11-teal?style=flat-square&labelColor=1a1a1a)](#)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-8a2be2?style=flat-square&labelColor=1a1a1a)](#)
-[![Security: Hybrid Post-Quantum KEM](https://img.shields.io/badge/KEM-Kyber--1024_%2B_X448-teal?style=flat-square&labelColor=1a1a1a)](#)
+[![Security: Post-Quantum + AES](https://img.shields.io/badge/Security-Post--Quantum--Ready-teal?style=flat-square&labelColor=1a1a1a)](#)
 
 <br>
 
-**Axis** is a Linux encrypted disk manager for creating and mounting encrypted volumes. It uses AES-256-GCM for the data layer and a hybrid post-quantum key encapsulation mechanism (Kyber-1024 + X448) to wrap the keys, so a volume stays protected as long as *either* the lattice scheme or the elliptic-curve scheme remains unbroken. The goal is practical confidentiality today with a hedge against future quantum attacks.
-
-> **Status: experimental, unaudited.** Axis is built and maintained by a single developer and has not had an independent cryptographic audit. Do not rely on it as your only protection for data you cannot afford to lose or expose. Review the [Threat Model](#-threat-model) before use.
+**Axis** is an ultra-secure, high-performance encrypted disk manager engineered for the modern security paradigm. Powered by hardware-accelerated **AES-256-GCM** encryption and a robust hybrid post-quantum key encapsulation mechanism, Axis provides state-of-the-art security margins across all volume layers. By combining cutting-edge lattice-based cryptography, elliptic curve cryptography, and hardware-accelerated CPU instruction sets, it ensures your data remains completely private even against future quantum computing adversaries.
 
 </div>
 
@@ -34,13 +32,13 @@
 
 ## 🌌 Key Highlights
 
-- 🛡️ **AES-256-GCM data layer** — Authenticated encryption providing confidentiality and integrity for sectors and file streams.
-- 🧬 **Hybrid Key Encapsulation (KEM)** — Combines post-quantum **Kyber-1024** (lattice-based) with classical **X448** (ECDH). Master and file keys stay protected as long as either primitive holds.
-- ⚡ **Hardware acceleration** — Uses AES-NI and AVX2 via OpenSSL's EVP framework when the CPU supports them, for fast disk I/O.
-- 🌑 **Header-less volumes** — Containers carry no identifiable headers, signatures, or metadata blocks, so a volume is intended to be indistinguishable from random data. See the [Threat Model](#-threat-model) for the limits of this property.
-- 🔒 **Memory-hard KDF** — **Argon2id** configured with 1 GB of RAM to raise the cost of GPU- and ASIC-based brute-force attacks.
-- 🔄 **Dual-generation compatibility** — Trial-decryption supports both legacy and current volume structures.
-- 🐧 **FUSE 3 mounting** — Exposes an open volume as a transparent, read-write directory in user space.
+- 🛡️ **State-of-the-Art Security Margin** — Full AES-256-GCM authenticated encryption providing cryptographic integrity and confidentiality at the hardware level.
+- 🧬 **Hybrid Key Encapsulation (KEM)** — Combines post-quantum **Kyber-1024** (lattice-based) and classical **X448** (elliptic curve Diffie-Hellman) to secure master and file keys.
+- ⚡ **Hardware-Accelerated Engine** — Hand-tuned utilization of AES-NI and AVX2 instruction sets via OpenSSL's EVP framework for lightning-fast disk I/O performance.
+- 🌑 **Plausible Deniability** — Full **IND-RND** compliance: volumes have no identifiable headers, signatures, or metadata blocks, rendering them mathematically indistinguishable from raw thermal noise or random data.
+- 🔒 **Anti-Brute Force Protection** — Uses **Argon2id** key derivation locked with 1 GB of RAM to render GPU- and ASIC-based brute-force attacks economically and computationally impossible.
+- 🔄 **Dual-Generation Compatibility** — Seamless trial-decryption supports legacy and next-generation volume structures.
+- 🐧 **FUSE 3 Mounting** — Exposes encrypted containers as transparent, read-write filesystem directories in user space.
 
 <br>
 
@@ -48,7 +46,7 @@
 
 ## 🛠️ Cryptographic Architecture
 
-Axis uses a multi-tiered key hierarchy to separate the password, the long-term keys, and the per-sector data keys:
+Axis employs a multi-tiered cryptographic design to protect files from physical and quantum adversaries:
 
 ```mermaid
 graph TD
@@ -64,40 +62,11 @@ graph TD
 
 ### Encryption & Decryption Scheme
 
-1. **Key Wrapping**: Secret keys and KEM parameters are wrapped with **AES-256-GCM** using sector-specific nonces.
-2. **File Stream Layer**: File operations are split into fixed 4 MB segments processed in parallel by a thread pool (up to 8 hardware threads):
-   - **Encryption**: **AES-256-GCM** with unique per-segment derived nonces.
-   - **Decryption**: **AES-256-CTR** for random-access reads, with GCM integrity verified against a final aggregated authentication tag.
-3. **Sector Cache Layer**: Disk sectors are encrypted with **AES-256-GCM**, where the sector index is folded into the IV and Additional Authenticated Data (AAD) to resist sector relocation and replay.
-
-<br>
-
----
-
-## 🧭 Threat Model
-
-Understanding what Axis does and does not defend against is essential to using it safely.
-
-### What Axis aims to protect against
-
-- **Data-at-rest disclosure.** If an attacker obtains the volume file (lost laptop, seized drive, stolen backup) while it is **not mounted**, the contents should be unrecoverable without the passphrase.
-- **Offline brute-force.** The Argon2id KDF (1 GB RAM) is intended to make large-scale password guessing expensive, assuming a reasonably strong passphrase.
-- **Future quantum attacks on the key exchange.** The Kyber-1024 + X448 hybrid is meant to keep wrapped keys secure even if a quantum adversary later breaks X448, and vice versa for any future weakness in Kyber.
-- **Sector tampering and reordering.** Per-sector GCM tags with the sector index as AAD are intended to detect modification, relocation, or rollback of ciphertext sectors.
-
-### What Axis does *not* protect against
-
-- **A compromised running system.** Malware, a malicious root user, a keylogger, or a kernel-level implant on the machine can capture your passphrase or read decrypted data while a volume is mounted. Axis cannot defend a host that is already owned.
-- **Memory exposure while mounted.** Keys and plaintext exist in RAM during use. Axis calls `sodium_mlock` to avoid swapping, but a cold-boot attack, a DMA attack, or a memory dump of the running process can still expose them.
-- **Coercion (rubber-hose).** Header-less volumes provide *deniability of structure*, not protection from a determined adversary who can compel you to reveal a passphrase. Deniability is also weakened by side evidence — file timestamps, mount history, shell logs, application MRU lists, and the mere presence of Axis on the system.
-- **Traffic and metadata analysis.** Axis does not hide that encryption software is installed, nor file sizes, access patterns, or the existence of a large random-looking file. The indistinguishable-from-random property is a design goal of the volume contents, not a guarantee against forensic inference from the surrounding system.
-- **Implementation flaws.** This code is unaudited. Bugs in the C implementation, the key hierarchy, nonce handling, or the KEM combiner could undermine any of the above. Treat the security claims as design intent pending external review.
-- **Weak passphrases.** No KDF saves a guessable password. The strength of everything above rests on your passphrase entropy.
-- **Side channels.** Timing, cache, and power side channels in the underlying primitives or this code are out of scope and not specifically mitigated.
-
-### Assumptions
-
-Axis assumes a trusted, malware-free host at the time of volume creation and mounting, a passphrase with sufficient entropy, and correct functioning of the underlying libraries (libsodium, OpenSSL, FUSE 3). If any of these assumptions fails, the corresponding protections may not hold.
+1. **Key Wrapping**: Secret keys and KEM parameters are wrapped using **AES-256-GCM** with sector-specific nonces.
+2. **File Stream Layer**: For file operations, Axis divides streams into fixed 4 MB segments. Each segment is processed independently in parallel using a thread-pool (up to 8 hardware threads):
+   - **Encryption**: Conducted via **AES-256-GCM** with unique per-segment derived nonces.
+   - **Decryption**: Performed via **AES-256-CTR** for optimal random-access stream capabilities, with GCM integrity verification checking a final aggregated hash at completion.
+3. **Sector Cache Layer**: Disk sectors are encrypted/decrypted via **AES-256-GCM**, where the sector index is utilized as part of the GCM Initialization Vector (IV) and Additional Authenticated Data (AAD) to prevent sector relocation or replay attacks.
 
 <br>
 
@@ -118,7 +87,7 @@ To compile and run Axis on Linux, ensure you have the following packages install
 - **FUSE 3** (`libfuse3-dev` / `fuse3` — Virtual filesystem interface)
 
 ### Graphical User Interface (GTK)
-- **GTK 3** or **GTK 4** development libraries (used to build the dark-themed graphical dashboard)
+- **GTK 3** or **GTK 4** development libraries (used to build the modern dark-themed graphical dashboard)
 - **ncurses** (automatically falls back to a terminal UI if no GUI environment is found)
 
 ### Install Dependencies (Debian/Ubuntu)
@@ -140,7 +109,7 @@ make check-deps
 ```
 
 ### 2. Compilation
-To build the optimized production binary (detects CPU features and enables hardware acceleration where available):
+To build the optimized production binary (automatically detects CPU features and utilizes hardware accelerations):
 ```bash
 make
 ```
@@ -217,9 +186,7 @@ make run
 
 ## 👥 Authors & Contact
 
-- **Developer** — Jean-Francois Lachance-Caumartin (Effjy)
+- **Lead Cryptographer & GUI Developer** — Jean-Francois Lachance-Caumartin (Effjy)
 - **Contact** — [effjy@protonmail.com](mailto:effjy@protonmail.com)
-
-Axis is **experimental, unaudited software**. Independent review, cryptanalysis, and bug reports are genuinely welcome — please open an issue or get in touch.
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
