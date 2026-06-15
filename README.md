@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛰️ Axis v10.0.0 (Galactic Edition)
+<a href="https://github.com/effjy/axis/"><img src="titles/axis-v1000-title.svg" height="44" alt="AXIS v10.0.0"></a>
 
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal?style=flat-square&labelColor=1a1a1a)](LICENSE)
