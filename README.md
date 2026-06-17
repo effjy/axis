@@ -1,6 +1,6 @@
 <div align="center">
 
-<a href="https://github.com/effjy/axis/"><img src="titles/axis-v1000-title.svg" height="52" alt="AXIS v10.0.0"></a>
+# AXIS
 
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal?style=flat-square&labelColor=1a1a1a)](LICENSE)
