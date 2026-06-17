@@ -21,7 +21,7 @@
 ## 📸 Screenshot
 
 <div align="center">
-  <img src="screen.png" alt="Axis GUI Screenshot" width="800" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);"/>
+  <img src="screenshot.png" alt="Axis GUI Screenshot" width="800" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);"/>
   <br/><br/>
   <em>The Axis main dashboard — dark‑themed GTK interface for volume management</em>
 </div>
