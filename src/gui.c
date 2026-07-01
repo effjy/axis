@@ -551,11 +551,7 @@ static void on_about_clicked(GtkWidget *widget, gpointer data) {
         "A multi-layered cryptographic shield combining Kyber-1024 and X448. "
         "Protected against both today's supercomputers and tomorrow's quantum threats.", "\xf0\x9f\xa7\xac"); /* DNA */
 
-    add_feature_row(feature_box, "Abyssal Performance Core", 
-        "Hand-tuned for AVX2 SIMD. The 2048-bit wide-state permutation delivers "
-        "enterprise-grade speeds by processing massive data blocks in parallel.", "\xe2\x9a\xa1"); /* High Voltage */
-
-    add_feature_row(feature_box, "ASIC-Resistant Argon2id", 
+    add_feature_row(feature_box, "ASIC-Resistant Argon2id",
         "Armed with 1 GB RAM-locked password hashing. Makes GPU/ASIC-based "
         "brute-force attacks astronomically expensive and inefficient.", "\xf0\x9f\x94\x92"); /* Locked */
 
