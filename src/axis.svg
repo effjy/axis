@@ -1,46 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
-  <!-- Definitions for gradients and shadows -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%" role="img" aria-label="Axis">
   <defs>
-    <linearGradient id="tealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00F5D4" />
-      <stop offset="100%" stop-color="#00E5FF" />
+    <!-- Brand gradients -->
+    <linearGradient id="tealGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00F5D4"/>
+      <stop offset="100%" stop-color="#00B4D8"/>
     </linearGradient>
-    <linearGradient id="purpleGrad" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#7209B7" />
-      <stop offset="100%" stop-color="#A855F7" />
+    <linearGradient id="purpleGrad" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A855F7"/>
+      <stop offset="100%" stop-color="#7209B7"/>
     </linearGradient>
-    <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00E5FF" stop-opacity="0.8"/>
-      <stop offset="50%" stop-color="#A855F7" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#7209B7" stop-opacity="0.2"/>
+    <linearGradient id="edgeGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00F5D4"/>
+      <stop offset="50%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#A855F7"/>
     </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="15" result="blur" />
-      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    <radialGradient id="bgGlow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#141822"/>
+      <stop offset="100%" stop-color="#0C0C0E"/>
+    </radialGradient>
+    <linearGradient id="coreGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#151a24"/>
+      <stop offset="100%" stop-color="#0e1017"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
     </filter>
   </defs>
-  
-  <!-- Background Shield Grid -->
-  <rect width="512" height="512" rx="100" fill="#0C0C0E" stroke="#252529" stroke-width="8"/>
-  
-  <!-- Outer glowing path -->
-  <path d="M 256,60 L 410,150 L 410,320 C 410,400 256,460 256,460 C 256,460 102,400 102,320 L 102,150 Z" 
-        fill="none" stroke="url(#glowGrad)" stroke-width="4" filter="url(#glow)"/>
-        
-  <!-- Main Axis "A" Cyber Shield -->
-  <g transform="translate(0, 10)">
-    <!-- Left Leg of A (Teal) -->
-    <path d="M 256,90 L 140,360 L 195,360 L 256,215 Z" fill="url(#tealGrad)" opacity="0.9"/>
-    
-    <!-- Right Leg of A (Purple) -->
-    <path d="M 256,90 L 372,360 L 317,360 L 256,215 Z" fill="url(#purpleGrad)" opacity="0.9"/>
-    
-    <!-- Shield Core (Encapsulated security lock) -->
-    <path d="M 256,180 L 320,220 L 320,300 C 320,340 256,370 256,370 C 256,370 192,340 192,300 L 192,220 Z" 
-          fill="#121214" stroke="#00E5FF" stroke-width="6"/>
-          
-    <!-- Inner Lock Icon -->
-    <circle cx="256" cy="255" r="16" fill="#A855F7" />
-    <path d="M 250,265 L 262,265 L 266,305 L 246,305 Z" fill="#A855F7" />
+
+  <!-- Icon tile -->
+  <rect x="6" y="6" width="500" height="500" rx="112" fill="url(#bgGlow)" stroke="#26262c" stroke-width="6"/>
+
+  <!-- Ambient axis glow behind the mark -->
+  <path d="M256 96 L392 356 L120 356 Z" fill="none" stroke="url(#edgeGrad)" stroke-width="3" opacity="0.35" filter="url(#soft)"/>
+
+  <!-- The "A" — two crystalline legs -->
+  <g>
+    <!-- Left leg (teal) -->
+    <path d="M256 104 L150 372 L206 372 L256 236 Z" fill="url(#tealGrad)"/>
+    <!-- Right leg (purple) -->
+    <path d="M256 104 L362 372 L306 372 L256 236 Z" fill="url(#purpleGrad)"/>
+    <!-- Bright leading edges -->
+    <path d="M256 104 L150 372" fill="none" stroke="#7dffe9" stroke-width="3" opacity="0.7" stroke-linecap="round"/>
+    <path d="M256 104 L362 372" fill="none" stroke="#d0a5ff" stroke-width="3" opacity="0.7" stroke-linecap="round"/>
   </g>
+
+  <!-- Shield core (the crossbar of the A) -->
+  <path d="M256 214 L316 246 L316 300 C316 340 256 366 256 366 C256 366 196 340 196 300 L196 246 Z"
+        fill="url(#coreGrad)" stroke="url(#edgeGrad)" stroke-width="6"/>
+
+  <!-- Keyhole -->
+  <g fill="#00F5D4">
+    <circle cx="256" cy="286" r="15"/>
+    <path d="M248 296 L264 296 L269 332 L243 332 Z"/>
+  </g>
+  <circle cx="256" cy="286" r="15" fill="none" stroke="#A855F7" stroke-width="3" opacity="0.9"/>
 </svg>
